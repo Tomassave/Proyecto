@@ -54,7 +54,7 @@ async function resolveApiBase() {
     ((h === 'localhost' || h === '127.0.0.1') && p && staticPorts.has(p))
   ) {
     API_BASE = await probeSabanaBackend();
-    if (!API_BASE) API_BASE = 'http://localhost:3000';
+    if (!API_BASE) API_BASE = 'https://proyecto-1-22er.onrender.com';
     return;
   }
   API_BASE = '';
