@@ -1,28 +1,108 @@
 const pool = require('../config/db');
 
-/** Listado mínimo para que el frontend muestre el catálogo (complemento práctico de TKT-06/07). */
+/** TKT-09/TKT-10: Listar productos con paginación, búsqueda y filtros */
 async function listProducts(req, res) {
-  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const rawPage = req.query.page;
+  const rawLimit = req.query.limit;
+  const page = rawPage === undefined ? 1 : Number.parseInt(rawPage, 10);
+  const parsedLimit = rawLimit === undefined ? 20 : Number.parseInt(rawLimit, 10);
+
+  if (
+    !Number.isInteger(page) ||
+    page < 1 ||
+    !Number.isInteger(parsedLimit) ||
+    parsedLimit < 1 ||
+    (rawPage !== undefined && !/^\d+$/.test(String(rawPage))) ||
+    (rawLimit !== undefined && !/^\d+$/.test(String(rawLimit)))
+  ) {
+    return res.status(400).json({ error: 'Params inválidos' });
+  }
+  const limit = Math.min(100, parsedLimit);
   const offset = (page - 1) * limit;
 
+  const search = req.query.search ? String(req.query.search).trim() : '';
+  const category = req.query.category ? String(req.query.category).trim() : '';
+  const state = req.query.state ? String(req.query.state).trim() : '';
+  const minPrice = req.query.minPrice !== undefined ? Number(req.query.minPrice) : null;
+  const maxPrice = req.query.maxPrice !== undefined ? Number(req.query.maxPrice) : null;
+
+  if (state && !['nuevo', 'usado'].includes(state)) {
+    return res.status(400).json({ error: 'Params inválidos' });
+  }
+  if ((minPrice !== null && !Number.isFinite(minPrice)) || (maxPrice !== null && !Number.isFinite(maxPrice))) {
+    return res.status(400).json({ error: 'Params inválidos' });
+  }
+  if (minPrice !== null && minPrice < 0) {
+    return res.status(400).json({ error: 'Params inválidos' });
+  }
+  if (maxPrice !== null && maxPrice < 0) {
+    return res.status(400).json({ error: 'Params inválidos' });
+  }
+  if (minPrice !== null && maxPrice !== null && minPrice > maxPrice) {
+    return res.status(400).json({ error: 'Params inválidos' });
+  }
+
   try {
-    const countResult = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM products WHERE active = TRUE`
-    );
+    let countQuery = 'SELECT COUNT(*)::int AS n FROM products p WHERE p.active = TRUE';
+    let dataQuery = `SELECT p.id, p.title, p.description, p.price, p.category, p.state, p.image_urls,
+                            p.seller_id, p.created_at, p.updated_at,
+                            u.name AS seller_name
+                     FROM products p
+                     JOIN users u ON u.id = p.seller_id
+                     WHERE p.active = TRUE`;
+
+    const params = [];
+    let paramCount = 1;
+
+    // Filtro de búsqueda textual (title + description)
+    if (search) {
+      const searchFilter = `(p.title ILIKE $${paramCount} OR p.description ILIKE $${paramCount})`;
+      countQuery += ` AND ${searchFilter}`;
+      dataQuery += ` AND ${searchFilter}`;
+      params.push(`%${search}%`);
+      paramCount++;
+    }
+
+    // Filtro de categoría
+    if (category) {
+      countQuery += ` AND p.category = $${paramCount}`;
+      dataQuery += ` AND p.category = $${paramCount}`;
+      params.push(category);
+      paramCount++;
+    }
+
+    // Filtro de estado (nuevo/usado)
+    if (state) {
+      countQuery += ` AND p.state = $${paramCount}`;
+      dataQuery += ` AND p.state = $${paramCount}`;
+      params.push(state);
+      paramCount++;
+    }
+
+    // Filtro de rango de precios
+    if (minPrice !== null && Number.isFinite(minPrice)) {
+      countQuery += ` AND p.price >= $${paramCount}`;
+      dataQuery += ` AND p.price >= $${paramCount}`;
+      params.push(minPrice);
+      paramCount++;
+    }
+
+    if (maxPrice !== null && Number.isFinite(maxPrice)) {
+      countQuery += ` AND p.price <= $${paramCount}`;
+      dataQuery += ` AND p.price <= $${paramCount}`;
+      params.push(maxPrice);
+      paramCount++;
+    }
+
+    // Contar total
+    const countResult = await pool.query(countQuery, params.slice(0, paramCount - 1));
     const total = countResult.rows[0].n;
 
-    const rows = await pool.query(
-      `SELECT p.id, p.title, p.description, p.price, p.category, p.state, p.image_urls,
-              p.seller_id, p.created_at, p.updated_at,
-              u.name AS seller_name
-       FROM products p
-       JOIN users u ON u.id = p.seller_id
-       WHERE p.active = TRUE
-       ORDER BY p.created_at DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
-    );
+    // Obtener datos con paginación
+    dataQuery += ` ORDER BY p.created_at DESC LIMIT $${paramCount} OFFSET $${paramCount + 1}`;
+    const paramsWithLimit = [...params, limit, offset];
+
+    const rows = await pool.query(dataQuery, paramsWithLimit);
 
     return res.status(200).json({
       total,
@@ -162,4 +242,36 @@ async function updateProduct(req, res) {
   }
 }
 
-module.exports = { listProducts, createProduct, updateProduct };
+/** TKT-08: Eliminar producto propio (soft-delete) */
+async function deleteProduct(req, res) {
+  const { id } = req.params;
+
+  try {
+    const cur = await pool.query(
+      `SELECT seller_id FROM products WHERE id = $1 AND active = TRUE`,
+      [id]
+    );
+    if (!cur.rowCount) {
+      return res.status(404).json({ error: 'Producto no encontrado' });
+    }
+    if (cur.rows[0].seller_id !== req.user.id) {
+      return res.status(403).json({ error: 'Sin permiso' });
+    }
+
+    // Soft-delete: marcar como inactivo
+    await pool.query(
+      `UPDATE products SET active = FALSE, updated_at = NOW() WHERE id = $1`,
+      [id]
+    );
+
+    return res.status(200).json({
+      message: 'Producto retirado',
+      productId: id,
+    });
+  } catch (err) {
+    console.error('[deleteProduct]', err.message);
+    return res.status(500).json({ error: 'Error interno del servidor' });
+  }
+}
+
+module.exports = { listProducts, createProduct, updateProduct, deleteProduct };

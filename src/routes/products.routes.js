@@ -42,4 +42,11 @@ router.put(
   products.updateProduct
 );
 
+router.delete(
+  '/:id',
+  authenticate,
+  authorizeRole('seller'),
+  products.deleteProduct
+);
+
 module.exports = router;

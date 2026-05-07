@@ -6,6 +6,8 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const authRoutes = require('./routes/auth.routes');
 const usersRoutes = require('./routes/users.routes');
 const productsRoutes = require('./routes/products.routes');
+const cartRoutes = require('./routes/cart.routes');
+const ordersRoutes = require('./routes/orders.routes');
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
@@ -13,12 +15,14 @@ app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'sabana-market', tickets: 'TKT-01–TKT-07' });
+  res.json({ ok: true, service: 'sabana-market', tickets: 'TKT-01–TKT-12' });
 });
 
 app.use('/auth', authRoutes);
 app.use('/users', usersRoutes);
 app.use('/products', productsRoutes);
+app.use('/cart', cartRoutes);
+app.use('/orders', ordersRoutes);
 
 app.use(express.static(path.join(__dirname, '..')));
 
