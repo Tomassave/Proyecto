@@ -57,7 +57,7 @@ async function resolveApiBase() {
     if (!API_BASE) API_BASE = 'https://proyecto-1-22er.onrender.com';
     return;
   }
-  API_BASE = '';
+  API_BASE = 'https://proyecto-1-22er.onrender.com';
 }
 
 function ensureApiDiscovered() {
